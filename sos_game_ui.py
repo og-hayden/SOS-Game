@@ -239,5 +239,30 @@ def draw_game():
     s_radio.draw()
     o_radio.draw()
 
+    # Draw SOS lines
+    for start_pos, end_pos, player in game_logic.get_sos_lines():
+        start_x = board_left + start_pos[1] * cell_size + cell_size // 2
+        start_y = board_top + start_pos[0] * cell_size + cell_size // 2
+        end_x = board_left + end_pos[1] * cell_size + cell_size // 2
+        end_y = board_top + end_pos[0] * cell_size + cell_size // 2
+        color = (0, 0, 255) if player == 'Blue' else (255, 0, 0)  # Blue or Red
+        pygame.draw.line(screen, color, (start_x, start_y), (end_x, end_y), 3)
+
+    # Draw scores for General game mode
+    if game_logic.game_mode == "General":
+        scores = game_logic.get_scores()
+        blue_score = font.render(f"Blue: {scores['Blue']}", True, (0, 0, 255))
+        red_score = font.render(f"Red: {scores['Red']}", True, (255, 0, 0))
+        screen.blit(blue_score, (20, 20))
+        screen.blit(red_score, (20, 60))
+
+    # Show winner if game is over
+    if game_logic.game_over:
+        winner_text = font.render(
+            f"Winner: {game_logic.winner}" if game_logic.winner != 'Draw' else "Game Draw!",
+            True, TEXT
+        )
+        screen.blit(winner_text, (WIDTH // 2 - winner_text.get_width() // 2, 20))
+
 if __name__ == "__main__":
     main()
