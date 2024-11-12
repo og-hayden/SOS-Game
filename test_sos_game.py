@@ -1,5 +1,7 @@
 import unittest
 from sos_game_logic import GameLogic, GameBoard
+from player import SimpleComputerPlayer, AdvancedComputerPlayer
+import pygame
 
 class TestGameLogicInitialization(unittest.TestCase):
 
@@ -208,6 +210,78 @@ class TestGamePlay(unittest.TestCase):
         self.assertFalse(game_logic.board.is_full())
         self.assertFalse(game_logic.game_over)
         self.assertIsNone(game_logic.winner)
+
+class TestComputerPlayer(unittest.TestCase):
+    def test_computer_player_creation(self):
+        """Test if computer players are correctly created with specified types"""
+        game_logic = GameLogic(3, "Simple", "human", "simple_computer")
+        self.assertIsInstance(game_logic.players['Red'], SimpleComputerPlayer)
+        
+        game_logic = GameLogic(3, "Simple", "human", "smart_computer")
+        self.assertIsInstance(game_logic.players['Red'], AdvancedComputerPlayer)
+
+    def test_computer_valid_move(self):
+        """Test if computer makes valid moves"""
+        game_logic = GameLogic(3, "Simple", "human", "simple_computer")
+        # Make human move first
+        game_logic.make_move(0, 0, 'S')
+        # Trigger computer move
+        game_logic._make_computer_move()
+        
+        # Count filled cells to verify computer made a move
+        filled_cells = sum(1 for row in game_logic.board.board 
+                         for cell in row if cell != '')
+        self.assertEqual(filled_cells, 2)
+
+    def test_computer_sos_completion(self):
+        """Test if advanced computer player can complete SOS when possible"""
+        # Create game with advanced computer player as Red
+        game_logic = GameLogic(3, "Simple", "human", "smart_computer")
+        
+        # Set up the board state directly
+        game_logic.board.board[0][0] = 'S'  # First S
+        game_logic.board.board[0][1] = 'O'  # Middle O
+        game_logic.board.current_player = 'Red'  # Make sure it's computer's turn
+        
+        # Print board state before computer move
+        print("\nBoard state before computer move:")
+        for row in range(game_logic.board.size):
+            print([game_logic.board.get_cell(row, c) for c in range(game_logic.board.size)])
+        
+        # Get the computer's move directly
+        computer_player = game_logic.players['Red']
+        row, col, letter = computer_player.make_move(game_logic.board)
+        
+        # Make the move
+        game_logic.make_move(row, col, letter)
+        
+        # Print board state after computer move
+        print("\nBoard state after computer move:")
+        for row in range(game_logic.board.size):
+            print([game_logic.board.get_cell(row, c) for c in range(game_logic.board.size)])
+        
+        # Verify the computer completed the SOS by checking the board state
+        self.assertEqual(game_logic.board.get_cell(0, 2), 'S')  # Should be an S in the right position
+        self.assertTrue(game_logic.game_over)  # Game should be over
+        self.assertEqual(game_logic.winner, 'Red')  # Computer (Red) should win
+
+    def test_computer_move_timing(self):
+        """Test if computer moves have appropriate delay"""
+        game_logic = GameLogic(3, "Simple", "human", "simple_computer")
+        game_logic.make_move(0, 0, 'S')
+        
+        # Set pending computer move
+        game_logic.pending_computer_move = True
+        game_logic.computer_move_timer = pygame.time.get_ticks()
+        
+        # Update immediately - should not make move
+        game_logic.update()
+        self.assertTrue(game_logic.pending_computer_move)
+        
+        # Simulate time passing (500ms)
+        game_logic.computer_move_timer -= 501
+        game_logic.update()
+        self.assertFalse(game_logic.pending_computer_move)
 
 if __name__ == '__main__':
     unittest.main()

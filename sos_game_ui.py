@@ -14,14 +14,14 @@ BOARD_BG = (39, 39, 42)  # zinc-800
 TITLE_COLOR = (244, 244, 245)  # zinc-100
 
 # Screen setup
-WIDTH, HEIGHT = 900, 700  # Increased screen size for better layout
+WIDTH, HEIGHT = 900, 700
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("SOS Game")
 
 # Fonts
 font = pygame.font.Font(None, 32)
 small_font = pygame.font.Font(None, 24)
-title_font = pygame.font.Font(None, 64)  # Larger title font
+title_font = pygame.font.Font(None, 64)
 
 class Button:
     def __init__(self, x, y, width, height, text, action):
@@ -95,13 +95,40 @@ class RadioGroup:
         for button in self.buttons:
             button.selected = (button == selected)
 
+ai_group = RadioGroup()
+ai_checkbox = Checkbox(50, 140, "Enable AI opponent")
+simple_ai_radio = RadioButton(80, 170, "Simple AI", ai_group)
+advanced_ai_radio = RadioButton(80, 200, "Advanced AI", ai_group)
+ai_group.add(simple_ai_radio)
+ai_group.add(advanced_ai_radio)
+
+# Board size options (moved down)
+board_size_group = RadioGroup()
+board_size_group.add(RadioButton(50, 310, "3x3", board_size_group))
+board_size_group.add(RadioButton(50, 350, "4x4", board_size_group))
+board_size_group.add(RadioButton(50, 390, "5x5", board_size_group))
+
 def start_game():
     global game_logic, game_started
     board_size = int(next(btn.text[0] for btn in board_size_group.buttons if btn.selected))
     game_mode = "Simple" if simple_mode_radio.selected else "General"
-    game_logic = GameLogic(board_size, game_mode)
+    
+    # Set up player types based on AI checkbox and difficulty selection
+    blue_player_type = "human"
+    red_player_type = "human"
+    if ai_checkbox.checked:
+        red_player_type = "simple_computer" if simple_ai_radio.selected else "smart_computer"
+    
+    game_logic = GameLogic(
+        size=board_size, 
+        game_mode=game_mode,
+        blue_player_type=blue_player_type,
+        red_player_type=red_player_type
+    )
+    
     game_started = True
     print(f"Starting new game: Size {board_size}x{board_size}, Mode: {game_mode}")
+    print(f"Blue Player: {blue_player_type}, Red Player: {red_player_type}")
 
 def new_game():
     global game_started
@@ -109,21 +136,15 @@ def new_game():
 
 # Create UI elements
 title = title_font.render("SOS Game", True, TITLE_COLOR)
-ai_checkbox = Checkbox(50, 180, "Enable AI opponent")
-board_size_group = RadioGroup()
-board_size_group.add(RadioButton(50, 280, "3x3", board_size_group))
-board_size_group.add(RadioButton(50, 320, "4x4", board_size_group))
-board_size_group.add(RadioButton(50, 360, "5x5", board_size_group))
 start_button = Button(WIDTH // 2 - 80, HEIGHT - 100, 160, 50, "Start Game", start_game)
 new_game_button = Button(WIDTH - 180, 20, 160, 50, "New Game", new_game)
 
 mode_group = RadioGroup()
-simple_mode_radio = RadioButton(50, 460, "Simple Game", mode_group)
-general_mode_radio = RadioButton(50, 500, "General Game", mode_group)
+simple_mode_radio = RadioButton(50, 480, "Simple Game", mode_group)
+general_mode_radio = RadioButton(50, 520, "General Game", mode_group)
 mode_group.add(simple_mode_radio)
 mode_group.add(general_mode_radio)
 
-# Add radio buttons for S and O selection
 letter_group = RadioGroup()
 s_radio = RadioButton(50, HEIGHT - 150, "S", letter_group)
 o_radio = RadioButton(50, HEIGHT - 110, "O", letter_group)
@@ -143,6 +164,9 @@ def main():
                 running = False
             if not game_started:
                 ai_checkbox.handle_event(event)
+                if ai_checkbox.checked:
+                    simple_ai_radio.handle_event(event)
+                    advanced_ai_radio.handle_event(event)
                 for btn in board_size_group.buttons:
                     btn.handle_event(event)
                 simple_mode_radio.handle_event(event)
@@ -166,6 +190,9 @@ def main():
                         letter = 'S' if s_radio.selected else 'O'
                         game_logic.make_move(row, col, letter)
 
+        if game_started and game_logic:
+            game_logic.update()
+
         screen.fill(BACKGROUND)
 
         if not game_started:
@@ -179,29 +206,30 @@ def main():
     sys.exit()
 
 def draw_menu():
-    # Draw title
     screen.blit(title, (WIDTH // 2 - title.get_width() // 2, 50))
+    
+    pygame.draw.line(screen, LINE, (30, 110), (WIDTH - 30, 110), 3)
+    pygame.draw.line(screen, LINE, (30, 280), (WIDTH - 30, 280), 3)
+    pygame.draw.line(screen, LINE, (30, 440), (WIDTH - 30, 440), 3)
 
-    # Draw decorative elements
-    pygame.draw.line(screen, LINE, (30, 130), (WIDTH - 30, 130), 3)
-    pygame.draw.line(screen, LINE, (30, 230), (WIDTH - 30, 230), 3)
-    pygame.draw.line(screen, LINE, (30, 420), (WIDTH - 30, 420), 3)
-
-    # Draw UI elements
     ai_checkbox.draw()
+    if ai_checkbox.checked:
+        simple_ai_radio.draw()
+        advanced_ai_radio.draw()
+
+    board_size_label = font.render("Select board size:", True, TEXT)
+    screen.blit(board_size_label, (50, 250))  # Moved down
     for btn in board_size_group.buttons:
         btn.draw()
-    start_button.draw()
-
-    # Draw labels
-    board_size_label = font.render("Select board size:", True, TEXT)
-    screen.blit(board_size_label, (50, 240))
 
     # Draw game mode options
     mode_label = font.render("Select game mode:", True, TEXT)
-    screen.blit(mode_label, (50, 420))
+    screen.blit(mode_label, (50, 450))  # Moved down
     simple_mode_radio.draw()
     general_mode_radio.draw()
+
+    # Draw start button
+    start_button.draw()
 
 def draw_game():
     # Draw game board
