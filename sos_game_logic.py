@@ -1,6 +1,8 @@
 from typing import Dict, List, Tuple, Optional
 from player import Player, HumanPlayer, SimpleComputerPlayer, AdvancedComputerPlayer
 import pygame
+from database import GameDatabase
+import logging
 
 class GameBoard:
     def __init__(self, size):
@@ -58,7 +60,7 @@ class GameBoard:
         if letter not in ['S', 'O']:
             return False
 
-        found_sos = False  # Track if any SOS is found
+        found_sos = False
 
         # Define all possible SOS patterns
         if letter == 'S':
@@ -134,12 +136,26 @@ class GameLogic:
         self.winner = None
         self.computer_move_timer = None
         self.pending_computer_move = False
+        self.db = GameDatabase()
+        self.game_id = self.db.start_new_game(size, game_mode, blue_player_type, red_player_type)
+        logging.info(f"Started new game with ID: {self.game_id}")
+        self.move_count = 0
+        self.stopped = False  # Add this flag to control game state
         
         # Initialize players
         self.players = {
             'Blue': self._create_player('Blue', blue_player_type),
             'Red': self._create_player('Red', red_player_type)
         }
+
+        # Add this line to track if both players are AI
+        self.is_ai_vs_ai = (blue_player_type != "human" and red_player_type != "human")
+        
+        # If it's AI vs AI and Blue is AI, schedule first move
+        if self.is_ai_vs_ai:
+            logging.info("Starting AI vs AI game")
+            self.pending_computer_move = True
+            self.computer_move_timer = pygame.time.get_ticks()
 
     def _create_player(self, symbol: str, player_type: str) -> Player:
         """Create appropriate player based on type"""
@@ -154,22 +170,52 @@ class GameLogic:
 
     def make_move(self, row: int, col: int, letter: str) -> bool:
         """Make a move and handle game logic"""
-        if self.game_over:
+        if self.game_over or not self.board.is_valid_move(row, col, letter):
             return False
 
-        print(f"Attempting move: {letter} at ({row}, {col})")  # Debug print
+        logging.info(f"Attempting move: {letter} at ({row}, {col})")
         
         # Make the move
         if not self.board.make_move(row, col, letter):
             return False
 
+        # Save move to database
+        self.move_count += 1
+        try:
+            self.db.save_move(
+                self.game_id,
+                self.board.current_player,
+                row,
+                col,
+                letter,
+                self.move_count
+            )
+            logging.info(f"Saved move {self.move_count} to database")
+        except Exception as e:
+            logging.error(f"Failed to save move to database: {e}")
+
         # Process the move
         self._process_move(row, col)
 
-        # Schedule computer move if it's computer's turn and this wasn't a computer move
-        if (not self.game_over and 
-            not self.pending_computer_move and  # Only schedule if not already pending
-            isinstance(self.players[self.board.current_player], (SimpleComputerPlayer, AdvancedComputerPlayer))):
+        # If game is over, save final state
+        if self.game_over:
+            try:
+                self.db.end_game(
+                    self.game_id,
+                    self.winner,
+                    self.board.blue_score,
+                    self.board.red_score
+                )
+                logging.info(f"Game {self.game_id} ended. Winner: {self.winner}")
+                self.pending_computer_move = False  # Stop computer moves when game is over
+            except Exception as e:
+                logging.error(f"Failed to save game end state: {e}")
+            return True
+
+        # Schedule next computer move if needed
+        next_player = self.board.current_player
+        if isinstance(self.players[next_player], (SimpleComputerPlayer, AdvancedComputerPlayer)):
+            logging.info(f"Scheduling computer move for {next_player}")
             self.pending_computer_move = True
             self.computer_move_timer = pygame.time.get_ticks()
 
@@ -177,14 +223,39 @@ class GameLogic:
 
     def update(self):
         """Update game state - call this in your game loop"""
-        if self.pending_computer_move and pygame.time.get_ticks() - self.computer_move_timer >= 500:
-            self._make_computer_move()
-            self.pending_computer_move = False
+        if self.game_over or self.stopped:
+            return
+
+        current_time = pygame.time.get_ticks()
+        if self.pending_computer_move and current_time - self.computer_move_timer >= 500:
+            if not self.board.is_full():
+                self._make_computer_move()
+            else:
+                self.game_over = True
+                self._determine_winner()
+                self.pending_computer_move = False
 
     def _process_move(self, row: int, col: int):
         """Process a move and update game state"""
         sos_formed = self.board.check_sos(row, col)
         
+        # Save any new SOS lines to the database
+        current_lines_count = len(self.board.sos_lines)
+        if current_lines_count > 0:
+            for line in self.board.sos_lines[-1:]:  # Only process new lines
+                start_pos, end_pos, player = line
+                try:
+                    self.db.save_sos_line(
+                        self.game_id,
+                        self.move_count,
+                        list(start_pos),
+                        list(end_pos),
+                        player
+                    )
+                    logging.info(f"Saved SOS line for player {player}")
+                except Exception as e:
+                    logging.error(f"Failed to save SOS line: {e}")
+
         # Handle game over conditions
         if self.game_mode == "Simple" and sos_formed:
             self.game_over = True
@@ -207,30 +278,57 @@ class GameLogic:
     def _make_computer_move(self):
         """Handle computer move"""
         if self.game_over:
+            self.pending_computer_move = False
             return
 
         current_player = self.board.current_player
         computer = self.players[current_player]
         
         try:
+            # Check if board is full before attempting move
+            if self.board.is_full():
+                self.game_over = True
+                self._determine_winner()
+                self.pending_computer_move = False
+                return
+
             # Get the computer's move
-            comp_row, comp_col, comp_letter = computer.make_move(self.board)
-            print(f"Computer ({current_player}) plays: {comp_letter} at ({comp_row}, {comp_col})")
+            move = computer.make_move(self.board)
+            if move is None:
+                logging.error(f"Computer player {current_player} returned None for move")
+                self.pending_computer_move = False
+                return
+                
+            comp_row, comp_col, comp_letter = move
+            logging.info(f"Computer ({current_player}) plays: {comp_letter} at ({comp_row}, {comp_col})")
             
-            # Temporarily clear pending_computer_move to allow the move
-            was_pending = self.pending_computer_move
-            self.pending_computer_move = False
+            # Validate move before making it
+            if not self.board.is_valid_move(comp_row, comp_col, comp_letter):
+                logging.error(f"Computer attempted invalid move: {comp_letter} at ({comp_row}, {comp_col})")
+                self.pending_computer_move = False
+                return
             
             # Make the move
             success = self.make_move(comp_row, comp_col, comp_letter)
             
-            # Restore pending state if move failed
             if not success:
-                self.pending_computer_move = was_pending
-                print(f"Invalid computer move: {comp_letter} at ({comp_row}, {comp_col})")
+                logging.error(f"Computer move failed: {comp_letter} at ({comp_row}, {comp_col})")
+                self.pending_computer_move = False
                 
         except Exception as e:
-            print(f"Error during computer move: {e}")
+            logging.error(f"Error during computer move: {e}")
+            self.pending_computer_move = False
+
+    def _determine_winner(self):
+        """Determine the winner when game is over"""
+        if self.game_mode == "General":
+            if self.board.blue_score > self.board.red_score:
+                self.winner = 'Blue'
+            elif self.board.red_score > self.board.blue_score:
+                self.winner = 'Red'
+            else:
+                self.winner = 'Draw'
+        # For Simple mode, winner should already be set when SOS is formed
 
     def get_scores(self) -> Dict[str, int]:
         """Get the current scores"""
@@ -262,3 +360,27 @@ class GameLogic:
     def get_cell(self, row: int, col: int) -> str:
         """Get the value of a cell on the board"""
         return self.board.get_cell(row, col)
+
+    def new_game(self):
+        """Reset the game state"""
+        self.stop()  # Stop the current game first
+        self.board = GameBoard(self.board.size)
+        self.game_over = False
+        self.winner = None
+        self.computer_move_timer = None
+        self.pending_computer_move = False
+        self.move_count = 0
+        self.stopped = False  # Reset stopped flag
+        
+        # If it's AI vs AI, schedule first move
+        if self.is_ai_vs_ai:
+            logging.info("Starting new AI vs AI game")
+            self.pending_computer_move = True
+            self.computer_move_timer = pygame.time.get_ticks()
+
+    def stop(self):
+        """Stop the game completely"""
+        self.stopped = True
+        self.game_over = True
+        self.pending_computer_move = False
+        logging.info("Game stopped")
